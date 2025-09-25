@@ -1,0 +1,8 @@
+{
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": true,
+  "reportMissingImports": true,
+  "reportOptionalMemberAccess": true,
+  "reportFunctionMemberAccess": true,
+  "reportMissingReturnType": true
+}

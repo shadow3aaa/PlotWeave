@@ -12,7 +12,7 @@ openai = AsyncOpenAI(
 )
 
 
-async def generate_text(messages: Iterable[ChatCompletionMessageParam]) -> str:
+async def generate_text(messages: Iterable[ChatCompletionMessageParam]) -> str | None:
     response = await openai.chat.completions.create(
         model=config.writer_model,
         messages=messages,
