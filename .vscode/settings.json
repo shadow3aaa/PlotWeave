@@ -1,0 +1,10 @@
+{
+  "search.exclude": {
+    "webui/**/.yarn": true,
+    "webui/**/.pnp.*": true
+  },
+  "eslint.nodePath": "webui/.yarn/sdks",
+  "prettier.prettierPath": "webui/.yarn/sdks/prettier/index.cjs",
+  "typescript.tsdk": "webui/.yarn/sdks/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
+}
