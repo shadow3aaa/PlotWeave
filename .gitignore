@@ -11,3 +11,7 @@ wheels/
 
 # ENV config
 .env
+
+# Peristent directory
+datas/*
+!datas/.gitkeep

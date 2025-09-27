@@ -1,7 +1,10 @@
 from dataclasses import dataclass, field
 from enum import Enum, unique
+from os import path
+import pickle
 from typing import TypeAlias
 from uuid import UUID, uuid4
+import aiofiles
 import networkx
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
@@ -134,9 +137,32 @@ SearchResult: TypeAlias = SearchResultEntity | SearchResultEdge
 
 
 class World:
-    def __init__(self):
-        self.graph: networkx.MultiDiGraph[UUID] = networkx.MultiDiGraph()
-        self.client = AsyncQdrantClient(location=":memory:")  # 暂时使用内存保存以测试
+    def __init__(self, persistent_path: str | None = None):
+        """
+        创建一个空白的世界记忆
+
+        - persistent_path: 如果提供，则使用该目录进行持久化存储。
+
+        注意，在它的任何异步方法之前，必须先调用 initialize() 进行异步资源的初始化
+        """
+
+        if persistent_path is None:
+            self.client = AsyncQdrantClient(location=":memory:")
+            self.graph_location = None
+        else:
+            qdrant_location = path.abspath(persistent_path) + "/qdrant"
+            self.client = AsyncQdrantClient(path=qdrant_location)
+            self.graph_location = path.abspath(persistent_path) + "/graph.pkl"
+
+        if self.graph_location is None:
+            self.graph: networkx.MultiDiGraph[UUID] = networkx.MultiDiGraph()
+        else:
+            try:
+                self.graph: networkx.MultiDiGraph[UUID] = load_graph_from_file(
+                    file_path=self.graph_location
+                )
+            except GraphLoadError:
+                self.graph = networkx.MultiDiGraph()
 
     async def initialize(self):
         """
@@ -503,3 +529,49 @@ class World:
             lines.append(f'    {start_node} -- "{edge_label}" --> {end_node}')
 
         return "\n".join(lines)
+
+    async def sync_to_disk(self):
+        """
+        将世界状态同步到持久化存储（如果有的话）
+        """
+        if self.graph_location is not None:
+            data = pickle.dumps(self.graph)
+            async with aiofiles.open(self.graph_location, "wb") as f:
+                await f.write(data)
+
+
+class GraphLoadError(Exception):
+    """从 Pickle 文件加载图时发生错误的基类"""
+
+    pass
+
+
+def load_graph_from_file(file_path: str) -> "nx.MultiDiGraph[UUID]":  # type: ignore  # noqa: F821
+    """
+    从指定 pickle 文件加载图数据。
+    如果失败，则抛出 GraphLoadError 异常。
+
+    - file_path: 图数据文件路径
+
+    返回加载的图对象。
+    """
+    try:
+        with open(file_path, "rb") as f:
+            graph_obj = pickle.load(f)
+
+        # 验证加载的对象是不是我们期望的 MultiDiGraph 类型
+        if not isinstance(graph_obj, networkx.MultiDiGraph):
+            raise GraphLoadError(
+                f"文件 '{file_path}' 中包含的不是一个有效的 MultiDiGraph 对象，而是 {type(graph_obj)} 类型。"
+            )
+
+        return graph_obj  # pyright: ignore[reportUnknownVariableType]
+
+    except FileNotFoundError as e:
+        raise GraphLoadError(f"找不到图文件 '{file_path}'。") from e
+    except pickle.UnpicklingError as e:
+        # 文件损坏或格式不兼容
+        raise GraphLoadError(f"图文件 '{file_path}' 已损坏或格式不兼容。") from e
+    except IOError as e:
+        # 其他可能的 IO 错误，如权限问题
+        raise GraphLoadError(f"读取图文件 '{file_path}' 时发生 IO 错误。") from e
