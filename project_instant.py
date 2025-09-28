@@ -34,7 +34,7 @@ class ProjectInstant:
         self.id = uuid4()
         self.world = World(persistent_path=instant_directory(self.id))
         self.outline = Outline()
-        self.metadata = ProjectMetadata(name=name)
+        self.metadata = ProjectMetadata(name=name, id=str(self.id))
 
     async def initialize(self):
         """

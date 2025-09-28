@@ -10,10 +10,11 @@ class ProjectMetadata(BaseModel):
     包括以下内容
 
     - name: 项目名称
-    - id: 项目唯一标识符 (UUID)
+    - id: 项目唯一标识符
     """
 
     name: str = "未命名项目"
+    id: str
 
 
 class ProjectMetadataSaveError(Exception):
