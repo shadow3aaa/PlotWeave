@@ -442,6 +442,7 @@ def get_related_edges_tool(
     except Exception as e:
         return f"获取相关边信息时出错: {str(e)}"
 
+
 class EdgeBetweenEntitiesOutput(BaseModel):
     """
     实体间边信息输出
@@ -461,6 +462,7 @@ class EdgeBetweenEntitiesOutput(BaseModel):
     """
     目标实体的唯一标识符
     """
+
 
 @tool
 def get_edges_between_entities_tool(

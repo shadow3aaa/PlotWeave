@@ -1,16 +1,22 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import shutil
 from typing import AsyncGenerator
+import uuid
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+import agent
+from agent import graph
 
 from outline import Outline
 from project_instant import ProjectInstant
 import project_instant
 from project_metadata import ProjectMetadata
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 import project_metadata
 
 
@@ -42,7 +48,10 @@ class ActiveProjectManager:
 
             print(f"加载项目到活动工作区: {project_id}")
             try:
-                instance = await project_instant.load_from_directory(project_id)
+                instance = await project_instant.load_from_directory(
+                    project_instant.instant_directory(uuid.UUID(project_id))
+                )
+                await instance.initialize()
                 # 加载后，设置初始心跳时间
                 self._active_projects[project_id] = (
                     instance,
@@ -275,3 +284,94 @@ async def update_project_outline(project_id: str, outline: Outline):
     project_instance = await active_projects.get(project_id)
     project_instance.outline = outline
     return project_instance.outline
+
+
+class ChatRequest(BaseModel):
+    """
+    聊天请求的请求体
+    """
+
+    message: str
+    history: list[dict[str, str]] = []
+
+
+async def stream_agent_response(
+    project_id: str, user_message: str, history: list[dict[str, str]]
+):
+    """
+    一个异步生成器，用于流式传输 Agent 的响应。
+    """
+    project_instance = await active_projects.get(project_id)
+    if not project_instance:
+        error_data = {"type": "error", "data": "项目未加载或不存在。"}
+        yield f"data: {json.dumps(error_data)}\n\n"
+        return
+
+    # 从前端发送的 history 构建 LangChain 的消息列表
+    messages: list[BaseMessage] = []
+    for msg in history:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        # 我们只将用户和最终的助手回复添加到历史记录中
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant" and msg.get("type") == "final":
+            messages.append(AIMessage(content=content))
+
+    # 添加当前用户的新消息
+    messages.append(HumanMessage(content=user_message))
+
+    # 使用包含完整历史的消息列表初始化 Agent 状态
+    state: agent.State = {
+        "messages": messages,
+        "world": project_instance.world,
+    }
+
+    try:
+        # 进行响应
+        async for event in graph.astream(state, config={"recursion_limit": 100}):  # pyright: ignore[reportUnknownMemberType]
+            for _, value_update in event.items():
+                if "messages" in value_update:
+                    new_messages = value_update["messages"]
+                    if new_messages:
+                        latest_message = new_messages[-1]
+                        # (这部分的流式输出逻辑保持不变)
+                        if isinstance(latest_message, AIMessage):
+                            if latest_message.tool_calls:
+                                tool_name = latest_message.tool_calls[0]["name"]
+                                stream_data = {
+                                    "type": "thinking",
+                                    "data": f"正在调用工具: `{tool_name}`...",
+                                }
+                                yield f"data: {json.dumps(stream_data)}\n\n"
+                            elif latest_message.content:  # type: ignore
+                                stream_data = {  # type: ignore
+                                    "type": "token",
+                                    "data": latest_message.content,  # type: ignore
+                                }
+                                yield f"data: {json.dumps(stream_data)}\n\n"
+                        elif isinstance(latest_message, ToolMessage):
+                            stream_data = {
+                                "type": "tool_result",
+                                "data": f"工具 `{latest_message.name}` 返回: {latest_message.content}",  # type: ignore
+                            }
+                            yield f"data: {json.dumps(stream_data)}\n\n"
+
+    except Exception as e:
+        print(f"Agent stream error: {e}")
+        error_data = {"type": "error", "data": f"Agent 执行出错: {str(e)}"}
+        yield f"data: {json.dumps(error_data)}\n\n"
+    finally:
+        end_data = {"type": "end", "data": "Stream ended"}
+        yield f"data: {json.dumps(end_data)}\n\n"
+
+
+@app.post("/api/projects/{project_id}/chat/stream")
+async def chat_stream(project_id: str, request: ChatRequest):
+    """
+    与指定项目的 Agent 进行流式对话。
+    """
+    return StreamingResponse(
+        stream_agent_response(project_id, request.message, request.history),
+        media_type="text/event-stream",
+    )

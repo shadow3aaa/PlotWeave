@@ -29,7 +29,6 @@ async def main():
             current_messages.append(HumanMessage(content=user_input))
             state["messages"] = current_messages
 
-
             final_state_snapshot = None
             async for event in graph.astream(state, config={"recursion_limit": 114514}):  # type: ignore
                 for node_name, value_update in event.items():
@@ -59,13 +58,14 @@ async def main():
 
             if final_state_snapshot:
                 last_node_name = list(final_state_snapshot.keys())[-1]
-                state.update(final_state_snapshot[last_node_name]) # 合并 state 与最后一个节点的输出
-
+                state.update(
+                    final_state_snapshot[last_node_name]
+                )  # 合并 state 与最后一个节点的输出
 
         except KeyboardInterrupt:
             print("\nGoodbye!")
             break
-    
+
     await project_instant.save_to_directory(instant)
 
 

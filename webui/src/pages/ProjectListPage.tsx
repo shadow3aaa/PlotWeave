@@ -1,5 +1,9 @@
 import { useState, useEffect } from "react";
-import { ProjectCard, ProjectPhase, type ProjectMetadata } from "@/components/ProjectCard";
+import {
+  ProjectCard,
+  ProjectPhase,
+  type ProjectMetadata,
+} from "@/components/ProjectCard";
 import { Button } from "../components/ui/button";
 import {
   Dialog,

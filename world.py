@@ -186,12 +186,17 @@ class World:
         """
         初始化一些异步资源，必须在创建之后尽早调用
         """
-        await self.client.recreate_collection(
-            collection_name="world",
-            vectors_config=VectorParams(
-                size=config.vector_dimension, distance=Distance.COSINE
-            ),
-        )
+        try:
+            # 尝试获取集合信息，如果不存在会抛出异常
+            await self.client.get_collection(collection_name="world")
+        except Exception:
+            # 捕获异常（意味着集合不存在），然后创建它
+            await self.client.recreate_collection(
+                collection_name="world",
+                vectors_config=VectorParams(
+                    size=config.vector_dimension, distance=Distance.COSINE
+                ),
+            )
 
     async def add_entity(self, entity: Entity):
         """
