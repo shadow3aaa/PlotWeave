@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import YAML from "yaml";
 import Editor from "@monaco-editor/react";
-import { Loader2, Check, AlertCircle } from "lucide-react";
+import { Loader2, Check, AlertCircle, ArrowRight } from "lucide-react";
+import { ProjectPhase, type ProjectMetadata } from "@/components/ProjectCard";
+import { Button } from "@/components/ui/button";
 
 interface OutlineData {
   title: string;
@@ -44,8 +46,11 @@ function isValidOutlineData(data: unknown): data is OutlineData {
 
 function OutlinePage() {
   const { projectId } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
 
   const [outline, setOutline] = useState<OutlineData | null>(null);
+  const [project, setProject] = useState<ProjectMetadata | null>(null);
+  const [projectPhase, setProjectPhase] = useState<ProjectPhase | null>(null);
   const [yamlText, setYamlText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,46 +58,54 @@ function OutlinePage() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const isInitialMount = useRef(true);
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!projectId) return;
+    setIsLoading(true);
+    try {
+      const [outlineResponse, projectResponse] = await Promise.all([
+        fetch(`/api/projects/${projectId}/outline`),
+        fetch(`/api/projects/${projectId}`),
+      ]);
 
-    const fetchOutline = async () => {
-      try {
-        const response = await fetch(`/api/projects/${projectId}/outline`);
-        if (!response.ok) {
-          throw new Error(`获取大纲失败: ${response.statusText}`);
-        }
-        const data: OutlineData = await response.json();
-        setOutline(data);
-        setYamlText(YAML.stringify(data));
-        setSaveStatus("success"); // 初始数据加载完毕，视为已保存
-      } catch (e) {
-        if (e instanceof Error) setError(e.message);
-      } finally {
-        setIsLoading(false);
+      if (!outlineResponse.ok) {
+        throw new Error(`获取大纲失败: ${outlineResponse.statusText}`);
       }
-    };
+      if (!projectResponse.ok) {
+        throw new Error(`获取项目信息失败: ${projectResponse.statusText}`);
+      }
 
-    fetchOutline();
+      const outlineData: OutlineData = await outlineResponse.json();
+      const projectData: ProjectMetadata = await projectResponse.json();
+
+      setOutline(outlineData);
+      setProject(projectData);
+      setProjectPhase(projectData.phase);
+      setYamlText(YAML.stringify(outlineData));
+      setSaveStatus("success");
+    } catch (e) {
+      if (e instanceof Error) setError(e.message);
+    } finally {
+      setIsLoading(false);
+    }
   }, [projectId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleAutoSave = useCallback(
     async (textToSave: string) => {
-      if (!projectId) return;
+      if (!projectId || projectPhase !== ProjectPhase.OUTLINE) return;
       setSaveStatus("saving");
 
       try {
         const parsedData = YAML.parse(textToSave);
-
-        // 在此处进行类型验证
         if (!isValidOutlineData(parsedData)) {
-          throw new Error(
-            "YAML 结构或类型错误. 必须包含字符串 'title' 和字符串数组 'plots'.",
-          );
+          throw new Error("YAML 结构或类型错误. 必须包含 'title' 和 'plots'.");
         }
 
         const response = await fetch(`/api/projects/${projectId}/outline`, {
-          method: "POST",
+          method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(parsedData),
         });
@@ -108,7 +121,7 @@ function OutlinePage() {
         setSaveStatus("error");
       }
     },
-    [projectId],
+    [projectId, projectPhase],
   );
 
   useEffect(() => {
@@ -116,21 +129,52 @@ function OutlinePage() {
       isInitialMount.current = false;
       return;
     }
+    if (projectPhase !== ProjectPhase.OUTLINE) return;
 
-    // 防抖处理：在用户停止输入 150ms 后再触发保存
     const debounceTimer = setTimeout(() => {
       handleAutoSave(yamlText);
     }, 150);
 
     return () => clearTimeout(debounceTimer);
-  }, [yamlText, handleAutoSave]);
+  }, [yamlText, handleAutoSave, projectPhase]);
 
   const handleEditorChange = (value: string | undefined) => {
-    // 当用户输入时，如果当前状态是成功或失败，则立即重置为空闲
     if (saveStatus === "success" || saveStatus === "error") {
       setSaveStatus("idle");
     }
     setYamlText(value || "");
+  };
+
+  const handleAdvancePhase = async () => {
+    if (!projectId || !project || saveStatus !== "success") {
+      alert("请确保所有更改已成功保存后再进入下一阶段。");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...project,
+          phase: ProjectPhase.WORLD_SETUP,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("推进项目阶段失败");
+      }
+
+      // 推进成功后，导航到新阶段的页面
+      navigate(`/projects/${projectId}/world-setup`);
+      window.location.reload(); // 刷新以确保侧边栏等状态正确更新
+    } catch (err) {
+      if (err instanceof Error) {
+        setError(err.message);
+      }
+    }
   };
 
   if (isLoading) {
@@ -141,24 +185,34 @@ function OutlinePage() {
     return <div className="text-red-500">错误: {error}</div>;
   }
 
+  const isReadOnly = projectPhase !== ProjectPhase.OUTLINE;
+
   const SaveStatusIndicator = () => (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground w-36 justify-end">
-      {saveStatus === "saving" && (
+    <div className="flex items-center gap-2 text-sm text-muted-foreground w-40 justify-end">
+      {" "}
+      {/* 增加了宽度到 w-40 */}
+      {isReadOnly ? (
+        <span>（只读模式）</span>
+      ) : (
         <>
-          <Loader2 className="size-4 animate-spin" />
-          <span>正在保存...</span>
-        </>
-      )}
-      {saveStatus === "success" && (
-        <>
-          <Check className="size-4 text-green-500" />
-          <span>已保存</span>
-        </>
-      )}
-      {saveStatus === "error" && (
-        <>
-          <AlertCircle className="size-4 text-red-500" />
-          <span>格式或结构错误</span>
+          {saveStatus === "saving" && (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              <span>正在保存...</span>
+            </>
+          )}
+          {saveStatus === "success" && (
+            <>
+              <Check className="size-4 text-green-500" />
+              <span>已保存</span>
+            </>
+          )}
+          {saveStatus === "error" && (
+            <>
+              <AlertCircle className="size-4 text-red-500" />
+              <span>格式或结构错误</span>
+            </>
+          )}
         </>
       )}
     </div>
@@ -175,7 +229,19 @@ function OutlinePage() {
             当前正在编辑的项目 ID: {projectId}
           </p>
         </div>
-        <SaveStatusIndicator />
+        <div className="flex items-center gap-4">
+          <SaveStatusIndicator />
+          {projectPhase === ProjectPhase.OUTLINE && (
+            <Button
+              onClick={handleAdvancePhase}
+              disabled={saveStatus !== "success"}
+              title="确保所有修改都已保存后再继续"
+            >
+              <span>完成大纲</span>
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
       <div className="flex-1 min-h-0 border rounded-md overflow-hidden shadow-sm">
         <Editor
@@ -184,6 +250,7 @@ function OutlinePage() {
           value={yamlText}
           onChange={handleEditorChange}
           options={{
+            readOnly: isReadOnly,
             minimap: { enabled: false },
             fontSize: 14,
             wordWrap: "on",

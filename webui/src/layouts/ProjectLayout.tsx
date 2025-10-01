@@ -39,6 +39,7 @@ function ProjectLayout() {
             console.log(`为项目 ${projectId} 发送了心跳`);
           } catch (error) {
             console.error("后续心跳发送失败:", error);
+            return; // 停止尝试发送心跳
           }
         }, 15000);
       } catch (err) {

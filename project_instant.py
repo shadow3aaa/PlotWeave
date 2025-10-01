@@ -2,7 +2,7 @@ from uuid import UUID, uuid4
 
 from outline import Outline
 import outline
-from project_metadata import ProjectMetadata
+from project_metadata import ProjectMetadata, ProjectPhase
 import project_metadata
 from world import World
 
@@ -34,7 +34,9 @@ class ProjectInstant:
         self.id = uuid4()
         self.world = World(persistent_path=instant_directory(self.id))
         self.outline = Outline()
-        self.metadata = ProjectMetadata(name=name, id=str(self.id))
+        self.metadata = ProjectMetadata(
+            name=name, id=str(self.id), phase=ProjectPhase.OUTLINE
+        )
 
     async def initialize(self):
         """
@@ -54,7 +56,7 @@ async def load_from_directory(dir: str) -> ProjectInstant:
     instant = ProjectInstant.__new__(ProjectInstant)
     instant.id = extract_id_from_directory(dir)
     instant.metadata = await project_metadata.load_from_file(metadata_path(instant.id))
-    instant.world = World(persistent_path=qdrant_path(instant.id))
+    instant.world = World(persistent_path=dir)
     instant.outline = await outline.load_from_file(outline_path(instant.id))
     return instant
 

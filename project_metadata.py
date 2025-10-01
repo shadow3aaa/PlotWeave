@@ -1,6 +1,23 @@
+from enum import IntEnum
 import aiofiles
 from pydantic import BaseModel, ValidationError
 import json
+
+
+class ProjectPhase(IntEnum):
+    """
+    小说项目的当前阶段
+
+    - OUTLINE: 大纲设计
+    - WORLD_SETUP: 世界记忆创建
+    - CHAPERING: 分章
+    - CHAPER_WRITING: 章节写作
+    """
+
+    OUTLINE = 0
+    WORLD_SETUP = 1
+    CHAPERING = 2
+    CHAPER_WRITING = 3
 
 
 class ProjectMetadata(BaseModel):
@@ -10,10 +27,12 @@ class ProjectMetadata(BaseModel):
     包括以下内容
 
     - name: 项目名称
+    - phase: 当前阶段
     - id: 项目唯一标识符
     """
 
     name: str = "未命名项目"
+    phase: ProjectPhase
     id: str
 
 

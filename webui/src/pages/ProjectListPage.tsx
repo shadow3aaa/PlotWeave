@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ProjectCard, type ProjectMetadata } from "@/components/ProjectCard";
+import { ProjectCard, ProjectPhase, type ProjectMetadata } from "@/components/ProjectCard";
 import { Button } from "../components/ui/button";
 import {
   Dialog,
@@ -61,8 +61,9 @@ function ProjectListPage() {
     }
   };
 
-  const handleDeleteProject = async (projectId: string) => {
+  const handleDeleteProject = async (project: ProjectMetadata) => {
     try {
+      const projectId = project.id;
       await fetch(`/api/projects/${projectId}`, {
         method: "DELETE",
       });
@@ -74,8 +75,26 @@ function ProjectListPage() {
     }
   };
 
-  const handleEnterProject = (projectId: string) => {
-    navigate(`/projects/${projectId}`);
+  const handleEnterProject = (project: ProjectMetadata) => {
+    const { id, phase } = project;
+    switch (phase) {
+      case ProjectPhase.OUTLINE:
+        navigate(`/projects/${id}/outline`);
+        break;
+      case ProjectPhase.WORLD_SETUP:
+        navigate(`/projects/${id}/world-setup`);
+        break;
+      case ProjectPhase.CHAPERING:
+        navigate(`/projects/${id}/chaptering`);
+        break;
+      case ProjectPhase.CHAPER_WRITING:
+        navigate(`/projects/${id}/chapter-writing`);
+        break;
+      default:
+        // 如果没有匹配的 phase，可以导航到一个默认页面，比如大纲页
+        navigate(`/projects/${id}`);
+        break;
+    }
   };
 
   if (isLoading) {

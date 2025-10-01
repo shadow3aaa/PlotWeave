@@ -1,19 +1,19 @@
 from dataclasses import dataclass, field
-from enum import Enum, unique
+from enum import IntEnum, unique
 from os import path
 import pickle
 from typing import TypeAlias
 from uuid import UUID, uuid4
 import aiofiles
 import networkx
-from qdrant_client import AsyncQdrantClient
+from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
 import vector
 from config import config
 
 
 @unique
-class EntityType(Enum):
+class EntityType(IntEnum):
     """
     实体类型枚举
 
@@ -63,6 +63,7 @@ class AttributeValue:
 class Entity:
     """
     实体
+
     - id: 实体唯一标识符
     - type: 实体类型
     - attributes: 实体属性列表
@@ -87,10 +88,27 @@ class Edge:
     - attributes: 边属性列表
     """
 
+    from_entity_id: UUID
+    """
+    起点实体的唯一标识符
+    """
+
+    to_entity_id: UUID
+    """
+    终点实体的唯一标识符
+    """
+
     id: UUID = field(default_factory=lambda: uuid4())
+    """
+    边的唯一标识符
+    """
+
     attributes: dict[str, list[AttributeValue]] = field(
         default_factory=dict[str, list[AttributeValue]]
     )
+    """
+    边的属性列表
+    """
 
     def __hash__(self):
         return hash(self.id)
@@ -349,6 +367,164 @@ class World:
             if key == edge_id:
                 return edge_data.get("edge")
         return None
+
+    async def delete_entity(self, entity_id: UUID) -> bool:
+        """
+        删除实体及其相关的所有边
+
+        - entity_id: 实体的唯一标识符
+
+        返回True表示删除成功，False表示实体不存在
+        """
+        if entity_id not in self.graph:
+            return False
+        self.graph.remove_node(entity_id)
+        # 删除向量数据库中的该实体
+        await self.client.delete(
+            collection_name="world", points_selector=[str(entity_id)], wait=True
+        )
+        # 删除所有from_entity_id等于指定实体ID的边
+        await self.client.delete(
+            collection_name="world",
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="from_entity_id",
+                            match=models.MatchValue(value=str(entity_id)),
+                        )
+                    ]
+                )
+            ),
+            wait=True,
+        )
+
+        # 删除所有to_entity_id等于指定实体ID的边
+        await self.client.delete(
+            collection_name="world",
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="to_entity_id",
+                            match=models.MatchValue(value=str(entity_id)),
+                        )
+                    ]
+                )
+            ),
+            wait=True,
+        )
+        return True
+
+    async def replace_entity(self, entity: Entity) -> bool:
+        """
+        替换实体
+
+        - entity: 实体对象
+
+        返回True表示替换成功，False表示实体不存在
+        """
+        if entity.id not in self.graph:
+            return False
+        self.graph.nodes[entity.id]["entity"] = entity
+        entity_attributes_str = "\n".join(
+            f"{key}：{', '.join(f'{av.value} ({av.timestamp_desc})' for av in values)}"
+            for key, values in entity.attributes.items()
+        )
+        entity_str = f"""实体属性：
+{entity_attributes_str}
+"""
+        entity_vector = await vector.generate_vector(entity_str)
+        if entity_vector is None:
+            raise ValueError("Failed to generate vector for entity.")
+        attributes_payload = {
+            key: [
+                {"value": av.value, "timestamp_desc": av.timestamp_desc}
+                for av in values
+            ]
+            for key, values in entity.attributes.items()
+        }
+        point = PointStruct(
+            id=str(entity.id),
+            vector=entity_vector,
+            payload={
+                "id": str(entity.id),
+                "type": str(entity.type),
+                "attributes": attributes_payload,
+            },
+        )
+        await self.client.upsert(
+            collection_name="world",
+            points=[point],
+        )
+        return True
+
+    async def replace_edge(self, edge: Edge) -> bool:
+        """
+        替换边
+
+        - edge: 边对象
+
+        返回True表示替换成功，False表示边不存在
+        """
+        for u, v, key in list(self.graph.edges(keys=True)):
+            if key == edge.id:
+                self.graph[u][v][key]["edge"] = edge
+                edge_attributes_str = "\n".join(
+                    f"{key}：{', '.join(f'{av.value} ({av.timestamp_desc})' for av in values)}"
+                    for key, values in edge.attributes.items()
+                )
+                edge_str = f"""边属性：
+{edge_attributes_str}
+"""
+                edge_vector = await vector.generate_vector(edge_str)
+                if edge_vector is None:
+                    raise ValueError("Failed to generate vector for edge.")
+                attributes_payload = {
+                    key: [
+                        {"value": av.value, "timestamp_desc": av.timestamp_desc}
+                        for av in values
+                    ]
+                    for key, values in edge.attributes.items()
+                }
+                point = PointStruct(
+                    id=str(edge.id),
+                    vector=edge_vector,
+                    payload={
+                        "id": str(edge.id),
+                        "type": "边",
+                        "from_entity_id": str(edge.from_entity_id),
+                        "to_entity_id": str(edge.to_entity_id),
+                        "attributes": attributes_payload,
+                    },
+                )
+                await self.client.upsert(
+                    collection_name="world",
+                    points=[point],
+                )
+                return True
+        return False
+
+    async def delete_edge(self, edge_id: UUID) -> bool:
+        """
+        删除边
+
+        - edge_id: 边的唯一标识符
+
+        返回True表示删除成功，False表示边不存在
+        """
+        for u, v, key in list(self.graph.edges(keys=True)):
+            if key == edge_id:
+                self.graph.remove_edge(u, v, key=edge_id)
+                # 删除向量数据库中的该边
+                await self.client.delete(
+                    collection_name="world",
+                    points_selector=[str(edge_id)],
+                    wait=True,
+                )
+
+                return True
+        return False
 
     def get_related_edges(
         self, entity_id: UUID

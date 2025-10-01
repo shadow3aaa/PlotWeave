@@ -77,6 +77,15 @@ class ActiveProjectManager:
         if project_id in self._locks:
             del self._locks[project_id]
 
+    async def sync_to_disk(self):
+        """
+        同步现有项目到磁盘
+        """
+        # 同步现有项目到磁盘，防止数据丢失
+        for pid in self._active_projects.keys():
+            instance, _ = self._active_projects[pid]
+            await project_instant.save_to_directory(instance)
+
     async def cleanup_task(self):
         """
         一个后台任务，定期清理因心跳超时的不活跃项目。
@@ -93,9 +102,7 @@ class ActiveProjectManager:
                 print(f"释放不活跃的项目实例 (心跳超时): {pid}")
                 await self.remove(pid)
             # 同步现有项目到磁盘，防止数据丢失
-            for pid in self._active_projects.keys():
-                instance, _ = self._active_projects[pid]
-                await project_instant.save_to_directory(instance)
+            await self.sync_to_disk()
 
 
 active_projects = ActiveProjectManager()
@@ -186,6 +193,25 @@ async def create_project(request: CreateProjectRequest):
     return instant.metadata
 
 
+@app.get("/api/projects/{project_id}", response_model=ProjectMetadata)
+async def get_project_metadata(project_id: str):
+    """
+    获取指定项目的元数据
+    """
+    instant = await active_projects.get(project_id)
+    return instant.metadata
+
+
+@app.put("/api/projects/{project_id}", response_model=ProjectMetadata)
+async def update_project_metadata(project_id: str, updated_metadata: ProjectMetadata):
+    """
+    更新指定项目的元数据
+    """
+    instant = await active_projects.get(project_id)
+    instant.metadata = updated_metadata
+    return instant.metadata
+
+
 @app.delete("/api/projects/{project_id}", status_code=200)
 async def delete_project(project_id: str):
     """
@@ -222,9 +248,11 @@ async def project_heartbeat(project_id: str):
         return {"message": f"Project {project_id} is active and heartbeat is recorded."}
     except HTTPException as e:
         # 重新抛出由 get() 引起的 HTTP 异常 (例如 404 Not Found)
+        print(f"项目心跳时发生错误: {e.detail}")
         raise e
     except Exception as e:
         # 捕获其他潜在的加载错误
+        print(f"激活项目时发生错误: {e}")
         raise HTTPException(
             status_code=500, detail=f"An error occurred while activating project: {e}"
         )
@@ -239,7 +267,7 @@ async def get_project_outline(project_id: str):
     return project_instance.outline
 
 
-@app.post("/api/projects/{project_id}/outline", response_model=Outline)
+@app.put("/api/projects/{project_id}/outline", response_model=Outline)
 async def update_project_outline(project_id: str, outline: Outline):
     """
     更新指定项目的大纲。

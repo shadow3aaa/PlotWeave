@@ -18,23 +18,33 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
+export const ProjectPhase = {
+  OUTLINE: 0,
+  WORLD_SETUP: 1,
+  CHAPERING: 2,
+  CHAPER_WRITING: 3,
+} as const;
+
+export type ProjectPhase = (typeof ProjectPhase)[keyof typeof ProjectPhase];
+
 export interface ProjectMetadata {
   id: string;
+  phase: ProjectPhase;
   name: string;
 }
 
 interface ProjectCardProps {
   project: ProjectMetadata;
-  onDelete: (projectId: string) => void;
-  onEnter: (projectId: string) => void;
+  onDelete: (project: ProjectMetadata) => void;
+  onEnter: (project: ProjectMetadata) => void;
 }
 
 export function ProjectCard({ project, onDelete, onEnter }: ProjectCardProps) {
   const handleDelete = () => {
-    onDelete(project.id);
+    onDelete(project);
   };
   const handleEnter = () => {
-    onEnter(project.id);
+    onEnter(project);
   };
 
   return (
