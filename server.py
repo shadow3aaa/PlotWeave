@@ -3,20 +3,27 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import shutil
-from typing import AsyncGenerator
 import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 import agent
-from agent import graph
+from agent import world_setup_graph, chaptering_graph
 
+from chapter import ChapterInfos
+from fs_utils import async_rglob
 from outline import Outline
 from project_instant import ProjectInstant
 import project_instant
-from project_metadata import ProjectMetadata
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from project_metadata import ProjectMetadata, ProjectPhase
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    AIMessage,
+    ToolMessage,
+    SystemMessage,
+)
 import project_metadata
 
 
@@ -82,6 +89,7 @@ class ActiveProjectManager:
             # 同步到磁盘以防数据丢失
             instance, _ = self._active_projects[project_id]
             await project_instant.save_to_directory(instance)
+            await instance.close()
             del self._active_projects[project_id]
         if project_id in self._locks:
             del self._locks[project_id]
@@ -150,25 +158,6 @@ def read_root():
 
 class ProjectListResponse(BaseModel):
     projects: list[ProjectMetadata]
-
-
-async def async_rglob(
-    root: str | Path,
-    pattern: str = "*",
-) -> AsyncGenerator[Path, None]:
-    """
-    异步递归遍历目录，返回匹配到的文件路径。
-
-    - root: 起始目录
-    - pattern: 匹配模式，默认为 "*"（所有文件）
-    """
-    root = Path(root)
-
-    loop = asyncio.get_running_loop()
-    files = await loop.run_in_executor(None, lambda: list(root.rglob(pattern)))
-
-    for file in files:
-        yield file
 
 
 @app.get("/api/projects", response_model=ProjectListResponse)
@@ -299,7 +288,7 @@ async def stream_agent_response(
     project_id: str, user_message: str, history: list[dict[str, str]]
 ):
     """
-    一个异步生成器，用于流式传输 Agent 的响应。
+    一个异步生成器，根据项目阶段动态选择并流式传输 Agent 的响应。
     """
     project_instance = await active_projects.get(project_id)
     if not project_instance:
@@ -307,35 +296,64 @@ async def stream_agent_response(
         yield f"data: {json.dumps(error_data)}\n\n"
         return
 
-    # 从前端发送的 history 构建 LangChain 的消息列表
-    messages: list[BaseMessage] = []
+    # 根据项目阶段选择 Agent 和构建系统提示 ---
+    project_phase = project_instance.metadata.phase
+    system_prompt = ""
+    graph = None
+
+    if project_phase == ProjectPhase.WORLD_SETUP:
+        graph = world_setup_graph
+        system_prompt = f"""你负责小说世界的初始化。你的任务是帮助用户通过对话构建初始世界记忆图谱。
+记住，你要创建世界记忆的状态应当是初始的状态，而非故事结束时的状态。
+你可以调用工具来创建实体（人物、地点等）和它们之间的关系。
+当前小说大纲：
+标题: {project_instance.outline.title}
+情节: {", ".join(project_instance.outline.plots)}
+"""
+    elif project_phase == ProjectPhase.CHAPERING:
+        graph = chaptering_graph
+        system_prompt = f"""你是一个专业的小说编辑。你的任务是帮助用户将大纲分解为具体的章节。
+你可以调用文件系统工具来创建、删除或修改章节文件。
+当前小说大纲：
+标题: {project_instance.outline.title}
+情节: {", ".join(project_instance.outline.plots)}
+"""
+    else:
+        error_data = {
+            "type": "error",
+            "data": f"项目当前阶段 {project_phase.name} 不支持交互式Agent。",
+        }
+        yield f"data: {json.dumps(error_data)}\n\n"
+        return
+
+    messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
     for msg in history:
         role = msg.get("role")
         content = msg.get("content", "")
-        # 我们只将用户和最终的助手回复添加到历史记录中
         if role == "user":
             messages.append(HumanMessage(content=content))
         elif role == "assistant" and msg.get("type") == "final":
             messages.append(AIMessage(content=content))
 
-    # 添加当前用户的新消息
     messages.append(HumanMessage(content=user_message))
 
-    # 使用包含完整历史的消息列表初始化 Agent 状态
     state: agent.State = {
         "messages": messages,
         "world": project_instance.world,
+        "chapter_infos": project_instance.chapter_infos,
+        "outline": project_instance.outline,
     }
 
     try:
-        # 进行响应
-        async for event in graph.astream(state, config={"recursion_limit": 100}):  # pyright: ignore[reportUnknownMemberType]
+        # 使用动态选择的 graph 进行响应
+        async for event in graph.astream(  # type: ignore
+            state, config={"recursion_limit": 100}
+        ):
             for _, value_update in event.items():
                 if "messages" in value_update:
                     new_messages = value_update["messages"]
                     if new_messages:
                         latest_message = new_messages[-1]
-                        # (这部分的流式输出逻辑保持不变)
                         if isinstance(latest_message, AIMessage):
                             if latest_message.tool_calls:
                                 tool_name = latest_message.tool_calls[0]["name"]
@@ -364,6 +382,17 @@ async def stream_agent_response(
     finally:
         end_data = {"type": "end", "data": "Stream ended"}
         yield f"data: {json.dumps(end_data)}\n\n"
+
+
+@app.get("/api/projects/{project_id}/chapters", response_model=ChapterInfos)
+async def get_project_chapters(project_id: str):
+    """
+    获取指定项目的所有章节信息。
+    """
+    project_instance = await active_projects.get(project_id)
+    if not project_instance:
+        raise HTTPException(status_code=404, detail="项目未加载")
+    return project_instance.chapter_infos
 
 
 @app.post("/api/projects/{project_id}/chat/stream")

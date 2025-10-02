@@ -139,7 +139,7 @@ export function ProjectSidebar({ projectId }: ProjectSidebarProps) {
               {({ isActive }) => (
                 <SidebarMenuButton
                   isActive={isActive}
-                  disabled={isPhaseDisabled(ProjectPhase.CHAPERING)}
+                  disabled={isPhaseDisabled(ProjectPhase.CHAPER_WRITING)}
                 >
                   <Bot className="h-4 w-4" />
                   <span>章节写作</span>

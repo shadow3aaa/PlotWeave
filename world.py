@@ -182,6 +182,12 @@ class World:
             except GraphLoadError:
                 self.graph = networkx.MultiDiGraph()
 
+    async def close(self):
+        """
+        关闭并释放资源，例如数据库连接。
+        """
+        await self.client.close()
+
     async def initialize(self):
         """
         初始化一些异步资源，必须在创建之后尽早调用
@@ -727,7 +733,7 @@ class GraphLoadError(Exception):
     pass
 
 
-def load_graph_from_file(file_path: str) -> "nx.MultiDiGraph[UUID]":  # type: ignore  # noqa: F821
+def load_graph_from_file(file_path: str) -> "networkx.MultiDiGraph[UUID]":
     """
     从指定 pickle 文件加载图数据。
     如果失败，则抛出 GraphLoadError 异常。

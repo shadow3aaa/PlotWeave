@@ -77,7 +77,7 @@ function ProjectLayout() {
   return (
     <SidebarProvider className="h-screen bg-background text-foreground">
       <ProjectSidebar projectId={projectId!} />
-      <main className="flex-1 min-w-0 overflow-y-auto p-4 sm:p-8">
+      <main className="flex-1 min-w-0 overflow-hidden p-4 sm:p-8">
         {renderContent()}
       </main>
     </SidebarProvider>

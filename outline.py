@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 import yaml
 import aiofiles
 
@@ -13,8 +13,8 @@ class Outline(BaseModel):
     - plots: 主要情节列表
     """
 
-    title: str = "未命名小说"
-    plots: list[str] = []
+    title: str = Field(default="未命名小说", description="小说标题")
+    plots: list[str] = Field(default_factory=list[str], description="主要情节列表")
 
 
 class OutlineLoadError(Exception):

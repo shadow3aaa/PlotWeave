@@ -1,5 +1,7 @@
 from uuid import UUID, uuid4
 
+from chapter import ChapterInfos
+import chapter
 from outline import Outline
 import outline
 from project_metadata import ProjectMetadata, ProjectPhase
@@ -33,7 +35,8 @@ class ProjectInstant:
 
         self.id = uuid4()
         self.world = World(persistent_path=instant_directory(self.id))
-        self.outline = Outline()
+        self.outline = Outline(title="未命名小说", plots=[])
+        self.chapter_infos = ChapterInfos()
         self.metadata = ProjectMetadata(
             name=name, id=str(self.id), phase=ProjectPhase.OUTLINE
         )
@@ -43,6 +46,12 @@ class ProjectInstant:
         初始化一些异步资源，必须在创建之后尽早调用
         """
         await self.world.initialize()
+
+    async def close(self):
+        """
+        关闭并释放项目持有的所有资源，例如数据库连接。
+        """
+        await self.world.close()
 
 
 async def load_from_directory(dir: str) -> ProjectInstant:
@@ -58,6 +67,7 @@ async def load_from_directory(dir: str) -> ProjectInstant:
     instant.metadata = await project_metadata.load_from_file(metadata_path(instant.id))
     instant.world = World(persistent_path=dir)
     instant.outline = await outline.load_from_file(outline_path(instant.id))
+    instant.chapter_infos = await chapter.load_from_file(chapter_infos_path(instant.id))
     return instant
 
 
@@ -72,6 +82,7 @@ async def save_to_directory(instant: ProjectInstant):
 
     await project_metadata.save_to_file(instant.metadata, metadata_path(instant.id))
     await outline.save_to_file(instant.outline, outline_path(instant.id))
+    await chapter.save_to_file(instant.chapter_infos, chapter_infos_path(instant.id))
     await instant.world.sync_to_disk()
 
 
@@ -121,3 +132,12 @@ def outline_path(id: UUID) -> str:
     - id: 小说项目的 UUID
     """
     return f"{instant_directory(id)}/outline.yaml"
+
+
+def chapter_infos_path(id: UUID) -> str:
+    """
+    获取某个小说项目的章节信息文件路径
+
+    - id: 小说项目的 UUID
+    """
+    return f"{instant_directory(id)}/chapter_infos.yaml"

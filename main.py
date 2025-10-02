@@ -1,7 +1,7 @@
 import asyncio
 from project_instant import ProjectInstant
-from agent import graph
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from agent import world_setup_graph
 import agent
 import project_instant
 
@@ -15,8 +15,11 @@ async def main():
     state: agent.State = {
         "messages": [],
         "world": instant.world,
+        "chapter_infos": instant.chapter_infos,
+        "outline": instant.outline,
     }
 
+    # 构建图
     while True:
         try:
             user_input = input("User: ")
@@ -30,7 +33,9 @@ async def main():
             state["messages"] = current_messages
 
             final_state_snapshot = None
-            async for event in graph.astream(state, config={"recursion_limit": 114514}):  # type: ignore
+            async for event in world_setup_graph.astream( # type: ignore
+                state, config={"recursion_limit": 114514}
+            ):  # type: ignore
                 for node_name, value_update in event.items():
                     print(f"--- [节点: {node_name}] ---")
 
