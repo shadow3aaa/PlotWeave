@@ -4,10 +4,9 @@ import OutlinePage from "./pages/OutlinePage";
 import ProjectLayout from "./layouts/ProjectLayout";
 import WorldSetupPage from "./pages/WorldSetupPage";
 import ChapteringPage from "./pages/ChapteringPage";
+import ChapterWritingPage from "./pages/ChapterWritingPage";
 
 function App() {
-  // TODO: 实现其他页面组件
-  const ChapterWritingPage = () => <div>章节写作页面</div>;
   return (
     <Routes>
       <Route path="/" element={<ProjectListPage />} />

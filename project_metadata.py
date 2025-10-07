@@ -29,11 +29,13 @@ class ProjectMetadata(BaseModel):
     - name: 项目名称
     - phase: 当前阶段
     - id: 项目唯一标识符
+    - writing_chapter_index: 当前正在写作的章节索引，默认为 0，表示第一章
     """
 
     name: str = "未命名项目"
     phase: ProjectPhase
     id: str
+    writing_chapter_index: int = 0
 
 
 class ProjectMetadataSaveError(Exception):

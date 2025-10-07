@@ -1,17 +1,21 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import shutil
+from typing import Any
 import uuid
+import aiofiles
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from fastapi.responses import PlainTextResponse
 import agent
 from agent import world_setup_graph, chaptering_graph
 
-from chapter import ChapterInfos
+from chapter import ChapterInfo, ChapterInfos
 from fs_utils import async_rglob
 from outline import Outline
 from project_instant import ProjectInstant
@@ -25,6 +29,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 import project_metadata
+import writer_agent
 
 
 class ActiveProjectManager:
@@ -347,7 +352,7 @@ async def stream_agent_response(
     try:
         # 使用动态选择的 graph 进行响应
         async for event in graph.astream(  # type: ignore
-            state, config={"recursion_limit": 100}
+            state, config={"recursion_limit": 1145141919819810}
         ):
             for _, value_update in event.items():
                 if "messages" in value_update:
@@ -395,6 +400,84 @@ async def get_project_chapters(project_id: str):
     return project_instance.chapter_infos
 
 
+@app.get(
+    "/api/projects/{project_id}/chapters/{chapter_index}",
+    response_class=PlainTextResponse,
+)
+async def get_project_chapter_content(project_id: str, chapter_index: int):
+    """
+    获取指定项目的某个章节内容。
+    """
+    instance = await active_projects.get(project_id)
+    # 确保目录存在
+    os.makedirs(
+        os.path.dirname(
+            project_instant.output_path(
+                id=instance.id,
+                chapter_index=chapter_index,
+                chapter_info=instance.chapter_infos.chapters[chapter_index],
+            )
+        ),
+        exist_ok=True,
+    )
+    if chapter_index < 0 or chapter_index >= len(instance.chapter_infos.chapters):
+        raise HTTPException(status_code=400, detail="章节索引无效")
+    chapter_info = instance.chapter_infos.chapters[chapter_index]
+    try:
+        async with aiofiles.open(
+            project_instant.output_path(
+                id=instance.id, chapter_index=chapter_index, chapter_info=chapter_info
+            ),
+            mode="r",
+            encoding="utf-8",
+        ) as f:
+            content = await f.read()
+            return PlainTextResponse(content=content)
+    except FileNotFoundError:
+        # 章节文件不存在，创建一个空文件
+        async with aiofiles.open(
+            project_instant.output_path(
+                id=instance.id, chapter_index=chapter_index, chapter_info=chapter_info
+            ),
+            mode="w",
+            encoding="utf-8",
+        ) as f:
+            await f.write("")
+            return PlainTextResponse(content="")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取章节文件时发生错误: {e}")
+
+
+class ChapterContent(BaseModel):
+    content: str
+
+
+@app.put("/api/projects/{project_id}/chapters/{chapter_index}")
+async def save_project_chapter_content(
+    project_id: str, chapter_index: int, chapter_body: ChapterContent
+):
+    instance = await active_projects.get(project_id)
+    if chapter_index < 0 or chapter_index >= len(instance.chapter_infos.chapters):
+        raise HTTPException(status_code=400, detail="章节索引无效")
+    chapter_info = instance.chapter_infos.chapters[chapter_index]
+    try:
+        async with aiofiles.open(
+            project_instant.output_path(
+                id=instance.id, chapter_index=chapter_index, chapter_info=chapter_info
+            ),
+            mode="w",
+            encoding="utf-8",
+        ) as f:
+            await f.write(chapter_body.content)
+            return {"message": "章节内容已保存"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存章节文件时发生错误: {e}")
+
+
+writing_event_queues: dict[str, asyncio.Queue[None]] = {}
+writing_tasks: dict[str, asyncio.Task[dict[str, Any] | None]] = {}
+
+
 @app.post("/api/projects/{project_id}/chat/stream")
 async def chat_stream(project_id: str, request: ChatRequest):
     """
@@ -404,3 +487,152 @@ async def chat_stream(project_id: str, request: ChatRequest):
         stream_agent_response(project_id, request.message, request.history),
         media_type="text/event-stream",
     )
+
+
+class WritingRequest(BaseModel):
+    """
+    启动写作任务的请求体
+    """
+
+    chapter_index: int
+    chapter_info: ChapterInfo
+
+
+async def run_writing_agent_in_background(
+    project_id: str, chapter_index: int, chapter_info: ChapterInfo
+):
+    """
+    在后台执行写作 Agent 的 langgraph astream，并将事件放入对应的队列。
+    """
+    # 获取此任务专用的队列
+    queue = writing_event_queues.get(project_id)
+    if not queue:
+        print(f"错误：项目 {project_id} 的事件队列未找到。")
+        return
+
+    try:
+        project_instance = await active_projects.get(project_id)
+
+        # 初始化 Agent 状态
+        init_message = "你是一个专业的小说作家，正在按照预设的流程创作小说段落。"
+        state = writer_agent.State(
+            messages=[SystemMessage(content=init_message)],
+            project_id=uuid.UUID(project_id),
+            writing_state=writer_agent.WritingState.PLANNING,
+            current_chapter_index=chapter_index,
+            current_chapter_info=chapter_info,
+            world=project_instance.world,
+            metadata=project_instance.metadata,
+            approved_events=[],
+        )
+
+        async for event in writer_agent.graph.astream(  # pyright: ignore[reportUnknownMemberType]
+            state, config={"recursion_limit": 1145141919810}
+        ):
+            for _, value_update in event.items():
+                if "messages" in value_update:
+                    latest_message = value_update["messages"][-1]
+                    stream_data = None
+                    if isinstance(latest_message, AIMessage):
+                        if latest_message.tool_calls:
+                            tool_name = latest_message.tool_calls[0]["name"]
+                            stream_data = {
+                                "type": "thinking",
+                                "data": f"正在调用工具: `{tool_name}`...",
+                            }
+                        elif latest_message.content:  # type: ignore
+                            stream_data = {  # type: ignore
+                                "type": "content_chunk",
+                                "data": latest_message.content,  # type: ignore
+                            }
+                    elif isinstance(latest_message, ToolMessage):
+                        stream_data = {
+                            "type": "tool_result",
+                            "data": f"工具 `{latest_message.name}` 返回: {latest_message.content}",  # type: ignore
+                        }
+
+                    if stream_data:
+                        await queue.put(stream_data)  # type: ignore
+
+    except Exception as e:
+        error_data = {"type": "error", "data": f"写作 Agent 执行出错: {str(e)}"}
+        await queue.put(error_data)  # type: ignore
+        raise e
+    finally:
+        print(f"写作任务流结束: 项目 {project_id}, 章节索引 {chapter_index}")
+        # 发送结束信号
+        end_data = {"type": "end", "data": "写作任务流结束"}
+        await queue.put(end_data)  # type: ignore
+        # 放入一个 None 来告诉 stream_writing_progress 停止
+        await queue.put(None)
+
+
+@app.post("/api/projects/{project_id}/write/start", status_code=202)
+async def start_writing_chapter(project_id: str, request: WritingRequest):
+    """
+    为指定项目启动一个章节写作任务。
+    """
+    # 如果已有任务在运行，则不允许启动新任务
+    if project_id in writing_tasks and not writing_tasks[project_id].done():
+        raise HTTPException(
+            status_code=409, detail="该项目已有一个正在进行的写作任务。"
+        )
+
+    # 为这个任务创建一个新的事件队列
+    writing_event_queues[project_id] = asyncio.Queue()
+
+    # 在后台创建一个 Task 来运行 Agent
+    task = asyncio.create_task(
+        run_writing_agent_in_background(
+            project_id, request.chapter_index, request.chapter_info
+        )
+    )
+    writing_tasks[project_id] = task
+
+    print(f"接收到项目 {project_id} 的写作请求，目标章节索引: {request.chapter_index}")
+    return {"message": "写作任务已成功启动"}
+
+
+@app.get("/api/projects/{project_id}/write/stream")
+async def stream_writing_progress(project_id: str):
+    """
+    连接并流式传输指定项目写作任务的进度。
+    """
+
+    async def event_generator():
+        """从队列中获取事件并格式化为 SSE"""
+        queue = writing_event_queues.get(project_id)
+        if not queue:
+            # 如果队列不存在，说明任务可能还未启动或已结束
+            error_data = {"type": "error", "data": "未找到写作任务流。请先启动任务。"}
+            yield f"data: {json.dumps(error_data)}\n\n"
+            return
+
+        try:
+            while True:
+                # 从队列中等待一个事件
+                event = await queue.get()
+                if event is None:
+                    # None 是结束信号
+                    break
+                yield f"data: {json.dumps(event)}\n\n"
+        except asyncio.CancelledError:
+            # 当客户端断开连接时，会触发此异常
+            print(f"客户端断开连接，停止为项目 {project_id} 发送事件。")
+        finally:
+            # 清理资源
+            if project_id in writing_tasks:
+                del writing_tasks[project_id]
+            if project_id in writing_event_queues:
+                del writing_event_queues[project_id]
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/projects/{project_id}/write/current_chapter_index", response_model=int)
+async def get_current_writing_chapter_index(project_id: str):
+    """
+    获取当前正在写作的章节索引。
+    """
+    instant = await active_projects.get(project_id)
+    return instant.metadata.writing_chapter_index

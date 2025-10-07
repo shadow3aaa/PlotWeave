@@ -4,11 +4,7 @@ from typing import Annotated
 import uuid
 from langchain_core.tools import tool, BaseTool  # type: ignore
 from langgraph.prebuilt import InjectedState
-
 from pydantic import BaseModel, Field
-
-
-from agent_tools.outline_tools import get_outline_tool
 from world import AttributeValue, Edge, Entity, EntityType, SearchResultEntity, World
 
 
@@ -675,7 +671,6 @@ def replace_edge_attributes_tool(
 
 
 full_tools: list[BaseTool] = [
-    get_outline_tool,
     add_entity_tool,
     add_edge_tool,
     search_graph_tool,
@@ -695,7 +690,6 @@ full_tools: list[BaseTool] = [
 """
 
 read_only_tools: list[BaseTool] = [
-    get_outline_tool,
     search_graph_tool,
     get_entity_tool,
     get_edge_tool,
@@ -704,4 +698,14 @@ read_only_tools: list[BaseTool] = [
 ]
 """
 只读的世界记忆图谱工具列表，仅包括读取实体和边的功能，不包括任何修改图谱的操作。
+"""
+
+read_and_append_tools: list[BaseTool] = read_only_tools + [
+    add_entity_tool,
+    add_edge_tool,
+    append_entity_attributes_tool,
+    append_edge_attributes_tool,
+]
+"""
+读并且只能新增的世界记忆图谱工具列表，包含读取和新增实体及边（或其属性）的功能，但不包括删除或覆盖现有数据的操作。
 """

@@ -5,13 +5,9 @@ import Editor from "@monaco-editor/react";
 import { Loader2, Check, AlertCircle, ArrowRight } from "lucide-react";
 import { ProjectPhase, type ProjectMetadata } from "@/components/ProjectCard";
 import { Button } from "@/components/ui/button";
+import type { OutlineData } from "@/lib/types";
 
-interface OutlineData {
-  title: string;
-  plots: string[];
-}
-
-// 定义保存状态的类型
+// 保存状态的类型
 type SaveStatus = "idle" | "saving" | "success" | "error";
 
 /**

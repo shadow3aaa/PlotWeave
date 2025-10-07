@@ -1,6 +1,6 @@
 from uuid import UUID, uuid4
 
-from chapter import ChapterInfos
+from chapter import ChapterInfo, ChapterInfos
 import chapter
 from outline import Outline
 import outline
@@ -141,3 +141,15 @@ def chapter_infos_path(id: UUID) -> str:
     - id: 小说项目的 UUID
     """
     return f"{instant_directory(id)}/chapter_infos.yaml"
+
+
+def output_path(id: UUID, chapter_index: int, chapter_info: ChapterInfo) -> str:
+    """
+    获取某个小说项目指定章节的输出文件路径
+
+    - id: 小说项目的 UUID
+    - chapter_info: 章节信息
+    """
+    return (
+        f"{instant_directory(id)}/outputs/{chapter_index:02d}_{chapter_info.title}.md"
+    )

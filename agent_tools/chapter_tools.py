@@ -18,13 +18,16 @@ class StrippedChapterInfo(BaseModel):
 @tool
 def get_chapter_infos_tool(
     chapter_infos: Annotated[ChapterInfos, InjectedState("chapter_infos")],
-) -> list[str]:
+) -> list[str] | str:
     """
     获取章节信息
 
     注意，这里只返回章节标题的精简版本，如果需要包括意图在内的更多信息，请使用 get_chapter_info_by_index_tool 或 get_chapter_info_by_title_tool
     """
-    return [ci.title for ci in chapter_infos.chapters]
+    if len(chapter_infos.chapters) == 0:
+        return "当前没有章节信息"
+    else:
+        return [ci.title for ci in chapter_infos.chapters]
 
 
 @tool

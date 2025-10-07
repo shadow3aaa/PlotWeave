@@ -33,7 +33,7 @@ async def main():
             state["messages"] = current_messages
 
             final_state_snapshot = None
-            async for event in world_setup_graph.astream( # type: ignore
+            async for event in world_setup_graph.astream(  # type: ignore
                 state, config={"recursion_limit": 114514}
             ):  # type: ignore
                 for node_name, value_update in event.items():

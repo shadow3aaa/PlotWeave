@@ -4,18 +4,19 @@ from langchain_core.tools import BaseTool  # pyright: ignore[reportUnknownVariab
 import operator
 from langgraph.graph import StateGraph, START, END  # pyright: ignore[reportMissingTypeStubs]
 from langgraph.prebuilt import ToolNode
-
-from agent_tools import chapter_tools, world_tools
-from chapter import ChapterInfos
-from config import config
+from agent_tools import chapter_tools, outline_tools, world_tools
 from langchain.chat_models import init_chat_model
-
-
 from outline import Outline
 from world import World
+from chapter import ChapterInfos
+from config import config
 
 
 class State(TypedDict):
+    """
+    agent的状态
+    """
+
     messages: Annotated[list[BaseMessage], operator.add]
     """
     会话历史
@@ -36,8 +37,6 @@ class State(TypedDict):
     小说大纲
     """
 
-
-graph_builder = StateGraph(State)
 
 llm = init_chat_model(
     model=config.writer_model,
@@ -92,13 +91,17 @@ def build_graph(
     return graph_builder.compile()  # pyright: ignore[reportUnknownMemberType]
 
 
-world_setup_graph = build_graph(tools=world_tools.full_tools)
+world_setup_graph = build_graph(
+    tools=world_tools.full_tools + [outline_tools.get_outline_tool]
+)
 """
 世界初始化agent的流程图
 """
 
 chaptering_graph = build_graph(
-    tools=world_tools.read_only_tools + chapter_tools.full_tools
+    tools=world_tools.read_only_tools
+    + chapter_tools.full_tools
+    + [outline_tools.get_outline_tool]
 )
 """
 分章agent的流程图

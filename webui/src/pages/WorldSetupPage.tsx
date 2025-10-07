@@ -13,42 +13,9 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { cn } from "@/lib/utils";
+import { cn, streamAsyncIterator } from "@/lib/utils";
 import { type ProjectMetadata, ProjectPhase } from "@/components/ProjectCard";
-
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  type?: "thinking" | "tool_result" | "final";
-}
-
-type GroupedMessage =
-  | Message
-  | { type: "tool_group"; messages: Message[]; id: string };
-
-// 解析流的辅助函数
-async function* streamAsyncIterator(stream: ReadableStream<Uint8Array>) {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-      for (const part of parts) {
-        if (part.startsWith("data: ")) {
-          yield part.substring(6);
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
+import type { GroupedMessage, Message } from "@/lib/types";
 
 // 用于复制文本的 Hook
 const useCopyToClipboard = () => {
