@@ -32,8 +32,8 @@ async def append_to_output_file(
     # 再以追加模式写入
     async with aiofiles.open(output_path, mode="a", encoding="utf-8") as f:
         if not file_exists or is_empty:
-            await f.write(f"# {chapter_info.title}\n\n")
-        await f.write(paragraph + "\n")
+            await f.write(f"# {chapter_info.title}\n")
+        await f.write("\n" + paragraph + "\n")
 
 
 @tool
