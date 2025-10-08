@@ -217,7 +217,7 @@ def search_graph_tool(
                         score=item.score,
                     )
                 )
-            elif isinstance(item, Edge):
+            else:
                 output_results.append(
                     SearchResultEdgeOutput(
                         id=str(item.id),
